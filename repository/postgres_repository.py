@@ -1,10 +1,10 @@
-import psycopg2
+import psycopg
 from datetime import date
 from config.settings import DATABASE_URL
-
+ 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 def obtener_o_crear_usuario(telegram_user_id, nombre=None, username=None):
