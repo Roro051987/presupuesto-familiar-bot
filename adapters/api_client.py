@@ -123,3 +123,25 @@ class ApiClient:
         )
         r.raise_for_status()
         return r.json()
+    
+    @staticmethod
+    def configurar_presupuesto_categoria(usuario_id, categoria, monto):
+        r = requests.post(
+            f"{API_URL}/usuarios/{usuario_id}/presupuestos/categoria",
+            json={
+                "categoria": categoria,
+                "monto": monto
+            },
+            headers=headers()
+        )
+        r.raise_for_status()
+        return r.json()
+
+    @staticmethod
+    def presupuestos_categoria(usuario_id):
+        r = requests.get(
+            f"{API_URL}/usuarios/{usuario_id}/presupuestos/categorias",
+            headers=headers()
+        )
+        r.raise_for_status()
+        return r.json()

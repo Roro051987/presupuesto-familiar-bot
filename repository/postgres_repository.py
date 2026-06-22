@@ -521,7 +521,6 @@ def obtener_categorias():
 
     return rows
 
-
 def obtener_configuracion(usuario_id):
     conn = get_connection()
     cur = conn.cursor()
@@ -542,7 +541,6 @@ def obtener_configuracion(usuario_id):
 
     return row
 
-
 def actualizar_dia_inicio_mes(usuario_id, dia):
     conn = get_connection()
     cur = conn.cursor()
@@ -556,3 +554,88 @@ def actualizar_dia_inicio_mes(usuario_id, dia):
     conn.commit()
     cur.close()
     conn.close()
+
+def guardar_presupuesto_categoria(usuario_id, categoria, monto):
+    categoria_db = obtener_categoria_por_nombre(categoria)
+
+    if not categoria_db:
+        raise Exception(f"La categoría '{categoria}' no existe")
+
+    categoria_id = categoria_db[0]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO presupuestos_categoria (
+            usuario_id,
+            categoria_id,
+            anio,
+            mes,
+            monto
+        )
+        VALUES (
+            %s,
+            %s,
+            EXTRACT(YEAR FROM CURRENT_DATE)::INT,
+            EXTRACT(MONTH FROM CURRENT_DATE)::INT,
+            %s
+        )
+        ON CONFLICT (usuario_id, categoria_id, anio, mes)
+        DO UPDATE SET
+            monto = EXCLUDED.monto,
+            updated_at = NOW()
+    """, (
+        usuario_id,
+        categoria_id,
+        monto
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def obtener_presupuestos_categoria(usuario_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            c.nombre AS categoria,
+            pc.monto AS presupuesto,
+            COALESCE(SUM(m.monto), 0) AS gastado
+        FROM presupuestos_categoria pc
+        JOIN categorias c
+            ON c.id = pc.categoria_id
+        LEFT JOIN movimientos m
+            ON m.usuario_id = pc.usuario_id
+           AND m.categoria_id = pc.categoria_id
+           AND m.tipo = 'gasto'
+           AND m.eliminado = FALSE
+           AND date_trunc('month', m.fecha) = date_trunc('month', CURRENT_DATE)
+        WHERE pc.usuario_id = %s
+          AND pc.anio = EXTRACT(YEAR FROM CURRENT_DATE)::INT
+          AND pc.mes = EXTRACT(MONTH FROM CURRENT_DATE)::INT
+        GROUP BY
+            c.nombre,
+            pc.monto
+        ORDER BY
+            c.nombre
+    """, (usuario_id,))
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [
+        {
+            "categoria": row[0],
+            "presupuesto": row[1],
+            "gastado": row[2],
+            "disponible": row[1] - row[2],
+            "porcentaje": round((row[2] / row[1]) * 100, 1) if row[1] else 0
+        }
+        for row in rows
+    ]

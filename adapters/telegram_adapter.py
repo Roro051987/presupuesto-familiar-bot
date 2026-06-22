@@ -31,6 +31,7 @@ COMMAND_MAP = {
     "/borrar": "borra ultimo movimiento",
     "/categorias": "categorias",
     "/config": "config",
+    "/presupuestos": "presupuestos",
 }
 
 def format_money(amount):
@@ -309,6 +310,7 @@ def start_bot():
     app.add_handler(CommandHandler("config", command_handler))
     app.add_handler(CommandHandler("exportar", exportar_command))
     app.add_handler(CallbackQueryHandler(gastos_callback_handler, pattern=r"^gastos:\d+$"))
+    app.add_handler(CommandHandler("presupuestos", command_handler))
 
     app.add_handler(
         MessageHandler(

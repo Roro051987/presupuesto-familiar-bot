@@ -186,6 +186,12 @@ def detect_intent(text: str) -> str:
 
     if parse_amount(normalized):
         return "registrar_gasto"
+    
+    if normalized in ["presupuestos", "presupuesto categorias", "presupuestos categorias"]:
+        return "presupuestos_categoria"
+
+    if normalized.startswith("presupuesto "):
+        return "configurar_presupuesto_categoria"
 
     return "desconocido"
 
@@ -264,6 +270,35 @@ def parse_message(text: str) -> dict:
         return {
             "intent": "consulta_categoria",
             "categoria": normalize_category(categoria)
+        }
+    
+    if intent == "presupuestos_categoria":
+        return {
+            "intent": "presupuestos_categoria"
+        }
+
+    if intent == "configurar_presupuesto_categoria":
+        monto = parse_amount(normalized)
+
+        if not monto:
+            return {
+                "intent": "configurar_presupuesto_categoria",
+                "categoria": None,
+                "monto": None
+            }
+
+        categoria_texto = normalized.replace("presupuesto", "", 1)
+        categoria_texto = re.sub(
+            r"\d+(?:\.\d+)?\s*(lucas?|k|m|palos?|millones)?",
+            "",
+            categoria_texto
+        )
+        categoria_texto = " ".join(categoria_texto.split())
+
+        return {
+            "intent": "configurar_presupuesto_categoria",
+            "categoria": normalize_category(categoria_texto),
+            "monto": monto
         }
 
     if intent in ["registrar_gasto", "registrar_ingreso"]:

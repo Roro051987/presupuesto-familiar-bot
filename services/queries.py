@@ -6,7 +6,9 @@ from repository.postgres_repository import (
     aprender_alias_categoria,
     obtener_categorias,
     obtener_configuracion,
-    actualizar_dia_inicio_mes
+    actualizar_dia_inicio_mes,
+    guardar_presupuesto_categoria,
+    obtener_presupuestos_categoria
 )
 
 
@@ -40,3 +42,13 @@ def configuracion(usuario_id):
 
 def cambiar_fecha_corte(usuario_id, dia):
     return actualizar_dia_inicio_mes(usuario_id, dia)
+
+def configurar_presupuesto_categoria(usuario_id, categoria, monto):
+    return guardar_presupuesto_categoria(
+        usuario_id,
+        categoria,
+        monto
+    )
+
+def presupuestos_categoria(usuario_id):
+    return obtener_presupuestos_categoria(usuario_id)

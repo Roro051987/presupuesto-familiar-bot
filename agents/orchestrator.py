@@ -192,8 +192,61 @@ def process_message(usuario_id, text):
                 "• categorías\n"
                 "• config\n"
                 "• gastos del mes\n"
-                "• resumen"
+                "• resumen\n"
+                "• presupuesto supermercado 400 lucas\n"
+                "• presupuestos"
             )
+
+        if intent == "configurar_presupuesto_categoria":
+            categoria = result.get("categoria")
+            monto = result.get("monto")
+
+            if not categoria or not monto:
+                return (
+                    "Indícame la categoría y el monto.\n\n"
+                    "Ejemplos:\n"
+                    "• presupuesto supermercado 400 lucas\n"
+                    "• presupuesto salud 100000"
+                )
+
+            ApiClient.configurar_presupuesto_categoria(
+                usuario_id,
+                categoria,
+                monto
+            )
+
+            return (
+                f"✅ Presupuesto configurado.\n\n"
+                f"{categoria}: {format_money(monto)} este mes."
+            )
+
+        if intent == "presupuestos_categoria":
+            presupuestos = ApiClient.presupuestos_categoria(usuario_id)
+
+            if not presupuestos:
+                return (
+                    "No tienes presupuestos por categoría configurados.\n\n"
+                    "Ejemplo:\n"
+                    "• presupuesto supermercado 400 lucas"
+                )
+
+            lineas = ["📊 Presupuestos por categoría\n"]
+
+            for p in presupuestos:
+                estado = "✅"
+
+                if p["disponible"] < 0:
+                    estado = "⚠️"
+
+                lineas.append(
+                    f"{estado} {p['categoria']}\n"
+                    f"Presupuesto: {format_money(p['presupuesto'])}\n"
+                    f"Gastado: {format_money(p['gastado'])}\n"
+                    f"Disponible: {format_money(p['disponible'])}\n"
+                    f"Uso: {p['porcentaje']}%\n"
+                )
+
+            return "\n".join(lineas)
 
         return (
             "No entendí el mensaje.\n\n"

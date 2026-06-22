@@ -6,7 +6,9 @@ from services.queries import (
     gastos_mes,
     configuracion,
     cambiar_fecha_corte,
-    total_categoria
+    total_categoria,
+    configurar_presupuesto_categoria,
+    presupuestos_categoria
 )
 
 router = APIRouter()
@@ -16,6 +18,9 @@ class FechaCorteRequest(BaseModel):
     usuario_id: int
     dia: int
 
+class PresupuestoCategoriaRequest(BaseModel):
+    categoria: str
+    monto: int
 
 @router.get("/usuarios/{usuario_id}/resumen")
 def obtener_resumen(usuario_id: int):
@@ -71,3 +76,25 @@ def actualizar_fecha_corte(request: FechaCorteRequest):
         "ok": True,
         "dia_inicio_mes": request.dia
     }
+
+@router.post("/usuarios/{usuario_id}/presupuestos/categoria")
+def guardar_presupuesto_usuario_categoria(
+    usuario_id: int,
+    request: PresupuestoCategoriaRequest
+):
+    configurar_presupuesto_categoria(
+        usuario_id,
+        request.categoria,
+        request.monto
+    )
+
+    return {
+        "ok": True,
+        "categoria": request.categoria,
+        "monto": request.monto
+    }
+
+
+@router.get("/usuarios/{usuario_id}/presupuestos/categorias")
+def obtener_presupuestos_usuario_categoria(usuario_id: int):
+    return presupuestos_categoria(usuario_id)
