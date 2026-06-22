@@ -1189,3 +1189,144 @@ def actualizar_ingreso_mensual(usuario_id, ingreso_mensual):
     conn.close()
 
     return ingreso_mensual
+
+def normalizar_rut(rut):
+    if not rut:
+        return None
+
+    rut = rut.upper().replace(".", "").replace(" ", "")
+
+    if "-" not in rut and len(rut) > 1:
+        rut = rut[:-1] + "-" + rut[-1]
+
+    return rut
+
+
+def obtener_usuario_por_id(usuario_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, telegram_user_id, nombre, username, rut
+        FROM usuarios
+        WHERE id = %s
+        LIMIT 1
+    """, (usuario_id,))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "telegram_user_id": row[1],
+        "nombre": row[2],
+        "username": row[3],
+        "rut": row[4]
+    }
+
+
+def obtener_usuario_por_rut(rut):
+    rut = normalizar_rut(rut)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, telegram_user_id, nombre, username, rut
+        FROM usuarios
+        WHERE rut = %s
+        LIMIT 1
+    """, (rut,))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "telegram_user_id": row[1],
+        "nombre": row[2],
+        "username": row[3],
+        "rut": row[4]
+    }
+
+
+def vincular_usuario_por_rut(
+    usuario_id_actual,
+    rut,
+    telegram_user_id,
+    nombre,
+    username
+):
+    rut = normalizar_rut(rut)
+
+    usuario_existente = obtener_usuario_por_rut(rut)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if usuario_existente:
+        usuario_id_final = usuario_existente["id"]
+
+        cur.execute("""
+            UPDATE usuarios
+            SET telegram_user_id = NULL
+            WHERE telegram_user_id = %s
+              AND id <> %s
+        """, (
+            str(telegram_user_id),
+            usuario_id_final
+        ))
+
+        cur.execute("""
+            UPDATE usuarios
+            SET
+                telegram_user_id = %s,
+                nombre = COALESCE(%s, nombre),
+                username = COALESCE(%s, username)
+            WHERE id = %s
+        """, (
+            str(telegram_user_id),
+            nombre,
+            username,
+            usuario_id_final
+        ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {
+            "usuario_id": usuario_id_final,
+            "rut": rut,
+            "existente": True
+        }
+
+    cur.execute("""
+        UPDATE usuarios
+        SET rut = %s
+        WHERE id = %s
+    """, (
+        rut,
+        usuario_id_actual
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {
+        "usuario_id": usuario_id_actual,
+        "rut": rut,
+        "existente": False
+    }
+

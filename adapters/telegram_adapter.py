@@ -22,6 +22,11 @@ from agents.onboarding import process_onboarding
 from agents.orchestrator import process_message
 from adapters.api_client import ApiClient
 
+from agents.onboarding import (
+    process_onboarding,
+    obtener_config_onboarding
+)
+
 
 COMMAND_MAP = {
     "/ayuda": "ayuda",
@@ -157,14 +162,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username=telegram_user.username
     )
 
-    respuesta_onboarding = process_onboarding(
-        usuario_id=usuario_id,
-        text="",
-        nombre=telegram_user.first_name
-    )
+    config = obtener_config_onboarding(usuario_id)
 
-    if respuesta_onboarding:
-        await update.message.reply_text(respuesta_onboarding)
+    if not config or not config["onboarding_completo"]:
+        await update.message.reply_text(
+            f"👋 Hola {telegram_user.first_name}.\n\n"
+            "Para comenzar necesito tu RUT.\n\n"
+            "Ejemplos:\n"
+            "• 12.345.678-9\n"
+            "• 12345678-9"
+        )
         return
 
     await update.message.reply_text(
@@ -180,7 +187,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /resumen\n\n"
         "También puedes usar el menú de comandos con /"
     )
-
 
 async def command_handler(
     update: Update,
@@ -318,7 +324,9 @@ async def handle_user_message(
     respuesta_onboarding = process_onboarding(
         usuario_id=usuario_id,
         text=mensaje,
-        nombre=telegram_user.first_name
+        nombre=telegram_user.first_name,
+        telegram_user_id=str(telegram_user.id),
+        username=telegram_user.username
     )
 
     if respuesta_onboarding:
