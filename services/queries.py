@@ -15,7 +15,9 @@ from repository.postgres_repository import (
     editar_movimiento_por_id,
     eliminar_movimiento_por_id,
     crear_categoria_personalizada,
-    actualizar_ingreso_mensual
+    actualizar_ingreso_mensual,
+    obtener_usuario_por_rut,
+    obtener_o_crear_usuario_gpt_por_rut
 )
 
 
@@ -122,4 +124,36 @@ def configurar_ingreso_mensual(
     return actualizar_ingreso_mensual(
         usuario_id,
         ingreso_mensual
+    )
+
+def buscar_usuario_por_rut(rut):
+    usuario = obtener_usuario_por_rut(rut)
+
+    if not usuario:
+        return {
+            "found": False,
+            "message": "Usuario no encontrado"
+        }
+
+    return {
+        "found": True,
+        "usuario": usuario
+    }
+
+
+def onboarding_gpt(
+    rut,
+    nombre=None,
+    username=None,
+    moneda="CLP",
+    dia_inicio_mes=1,
+    ingreso_mensual=None
+):
+    return obtener_o_crear_usuario_gpt_por_rut(
+        rut=rut,
+        nombre=nombre,
+        username=username,
+        moneda=moneda,
+        dia_inicio_mes=dia_inicio_mes,
+        ingreso_mensual=ingreso_mensual
     )

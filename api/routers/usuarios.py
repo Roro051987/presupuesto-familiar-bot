@@ -15,10 +15,20 @@ from services.queries import (
     crear_categoria_usuario,
     configurar_ingreso_mensual,
     configurar_rut_usuario,
-    usuario_por_rut
+    usuario_por_rut,
+    buscar_usuario_por_rut,
+    onboarding_gpt
 )
 
 router = APIRouter()
+
+class GptOnboardingRequest(BaseModel):
+    rut: str
+    nombre: str | None = None
+    username: str | None = None
+    moneda: str = "CLP"
+    dia_inicio_mes: int = 1
+    ingreso_mensual: int | None = None
 
 class EditarMovimientoRequest(BaseModel):
     monto: int | None = None
@@ -248,3 +258,25 @@ def configurar_ingreso_mensual_endpoint(
         "usuario_id": usuario_id,
         "ingreso_mensual": ingreso
     }
+
+@router.get("/usuarios/rut/{rut}")
+def obtener_usuario_por_rut_endpoint(rut: str):
+    return buscar_usuario_por_rut(rut)
+
+
+@router.post("/usuarios/onboarding/gpt")
+def onboarding_gpt_endpoint(request: GptOnboardingRequest):
+    if request.dia_inicio_mes < 1 or request.dia_inicio_mes > 31:
+        raise HTTPException(
+            status_code=400,
+            detail="El día de corte debe estar entre 1 y 31"
+        )
+
+    return onboarding_gpt(
+        rut=request.rut,
+        nombre=request.nombre,
+        username=request.username,
+        moneda=request.moneda,
+        dia_inicio_mes=request.dia_inicio_mes,
+        ingreso_mensual=request.ingreso_mensual
+    )

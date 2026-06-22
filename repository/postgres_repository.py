@@ -1330,3 +1330,119 @@ def vincular_usuario_por_rut(
         "existente": False
     }
 
+def crear_configuracion_usuario_si_no_existe(
+    usuario_id,
+    moneda="CLP",
+    dia_inicio_mes=1,
+    ingreso_mensual=None,
+    onboarding_completo=True
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO configuracion_usuario (
+            usuario_id,
+            moneda,
+            dia_inicio_mes,
+            ingreso_mensual,
+            onboarding_completo,
+            paso_onboarding
+        )
+        VALUES (%s, %s, %s, %s, %s, NULL)
+        ON CONFLICT (usuario_id)
+        DO UPDATE SET
+            moneda = EXCLUDED.moneda,
+            dia_inicio_mes = EXCLUDED.dia_inicio_mes,
+            ingreso_mensual = COALESCE(EXCLUDED.ingreso_mensual, configuracion_usuario.ingreso_mensual),
+            onboarding_completo = EXCLUDED.onboarding_completo,
+            paso_onboarding = NULL
+    """, (
+        usuario_id,
+        moneda,
+        dia_inicio_mes,
+        ingreso_mensual,
+        onboarding_completo
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def obtener_o_crear_usuario_gpt_por_rut(
+    rut,
+    nombre=None,
+    username=None,
+    moneda="CLP",
+    dia_inicio_mes=1,
+    ingreso_mensual=None
+):
+    rut = normalizar_rut(rut)
+
+    usuario = obtener_usuario_por_rut(rut)
+
+    if usuario:
+        crear_configuracion_usuario_si_no_existe(
+            usuario_id=usuario["id"],
+            moneda=moneda,
+            dia_inicio_mes=dia_inicio_mes,
+            ingreso_mensual=ingreso_mensual,
+            onboarding_completo=True
+        )
+
+        return {
+            "ok": True,
+            "existente": True,
+            "usuario_id": usuario["id"],
+            "rut": rut,
+            "nombre": usuario.get("nombre"),
+            "username": usuario.get("username")
+        }
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO usuarios (
+            telegram_user_id,
+            nombre,
+            username,
+            rut
+        )
+        VALUES (
+            NULL,
+            %s,
+            %s,
+            %s
+        )
+        RETURNING id
+    """, (
+        nombre or "Usuario GPT",
+        username,
+        rut
+    ))
+
+    usuario_id = cur.fetchone()[0]
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    crear_configuracion_usuario_si_no_existe(
+        usuario_id=usuario_id,
+        moneda=moneda,
+        dia_inicio_mes=dia_inicio_mes,
+        ingreso_mensual=ingreso_mensual,
+        onboarding_completo=True
+    )
+
+    return {
+        "ok": True,
+        "existente": False,
+        "usuario_id": usuario_id,
+        "rut": rut,
+        "nombre": nombre or "Usuario GPT",
+        "username": username
+    }
+
