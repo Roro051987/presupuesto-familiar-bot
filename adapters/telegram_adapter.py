@@ -6,6 +6,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup
 )
+
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
@@ -14,13 +15,12 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters
 )
-from adapters.api_client import ApiClient
-from config.settings import TELEGRAM_BOT_TOKEN
 
+from config.settings import TELEGRAM_BOT_TOKEN
 from repository.postgres_repository import obtener_o_crear_usuario
 from agents.onboarding import process_onboarding
 from agents.orchestrator import process_message
-from services.queries import gastos_mes
+from adapters.api_client import ApiClient
 
 
 COMMAND_MAP = {
@@ -28,51 +28,52 @@ COMMAND_MAP = {
     "/resumen": "resumen",
     "/saldo": "cuanto me queda",
     "/gastos": "gastos del mes",
+    "/ingresos": "ingresos del mes",
     "/borrar": "borra ultimo movimiento",
     "/categorias": "categorias",
     "/config": "config",
     "/presupuestos": "presupuestos",
 }
 
+
 def format_money(amount):
     return f"${amount:,.0f}".replace(",", ".")
 
-def build_gastos_message(resultado):
-    gastos = resultado["gastos"]
+
+def format_fecha(fecha):
+    return str(fecha)[5:10]
+
+
+def build_movimientos_message(resultado, tipo):
+    key = "gastos" if tipo == "gastos" else "ingresos"
+    titulo = "📋 Gastos de este mes" if tipo == "gastos" else "📥 Ingresos de este mes"
+
+    movimientos = resultado[key]
     pagina = resultado["pagina"]
     total_paginas = resultado["total_paginas"]
     total_registros = resultado["total_registros"]
 
-    if not gastos:
-        return "No tienes gastos registrados este mes."
-
-    titulo = "📋 Gastos de este mes"
+    if not movimientos:
+        return f"No tienes {tipo} registrados este mes."
 
     if total_paginas > 1:
         titulo += f" ({pagina}/{total_paginas})"
 
     lineas = [titulo, ""]
 
-    inicio = 1 if total_registros <= 15 else ((pagina - 1) * 10) + 1
-
-    for i, gasto in enumerate(gastos, start=inicio):
-        fecha = gasto["fecha"]
-
-        if hasattr(fecha, "strftime"):
-            fecha_texto = fecha.strftime("%d-%m")
-        else:
-            fecha_texto = str(fecha)[5:10]
-
+    for mov in movimientos:
         lineas.append(
-            f"{i}. {fecha_texto} | {format_money(gasto['monto'])} | {gasto['categoria']}"
+            f"#{mov['id']} | {format_fecha(mov['fecha'])} | "
+            f"{format_money(mov['monto'])} | {mov['categoria']}"
         )
-    
+
     lineas.append("")
     lineas.append(f"Registros del mes: {total_registros}")
-    
+
     return "\n".join(lineas)
 
-def build_gastos_keyboard(resultado):
+
+def build_movimientos_keyboard(resultado, tipo):
     total_registros = resultado["total_registros"]
     pagina = resultado["pagina"]
     total_paginas = resultado["total_paginas"]
@@ -82,36 +83,43 @@ def build_gastos_keyboard(resultado):
 
     if 16 <= total_registros <= 20:
         buttons = [
-            InlineKeyboardButton("1", callback_data="gastos:1"),
-            InlineKeyboardButton("2", callback_data="gastos:2")
+            InlineKeyboardButton("1", callback_data=f"{tipo}:1"),
+            InlineKeyboardButton("2", callback_data=f"{tipo}:2")
         ]
-
         return InlineKeyboardMarkup([buttons])
 
     buttons = [
-        InlineKeyboardButton("1", callback_data="gastos:1"),
-        InlineKeyboardButton(f"Página {pagina}", callback_data=f"gastos:{pagina}")
+        InlineKeyboardButton("1", callback_data=f"{tipo}:1"),
+        InlineKeyboardButton(f"Página {pagina}", callback_data=f"{tipo}:{pagina}")
     ]
 
     if pagina < total_paginas:
         buttons.append(
-            InlineKeyboardButton(str(pagina + 1), callback_data=f"gastos:{pagina + 1}")
+            InlineKeyboardButton(str(pagina + 1), callback_data=f"{tipo}:{pagina + 1}")
         )
 
     return InlineKeyboardMarkup([buttons])
 
-async def send_gastos_page(update, usuario_id, pagina=1):
-    resultado = ApiClient.gastos(usuario_id, pagina=pagina)
 
-    texto = build_gastos_message(resultado)
-    keyboard = build_gastos_keyboard(resultado)
+async def send_movimientos_page(update, usuario_id, tipo, pagina=1):
+    if tipo == "gastos":
+        resultado = ApiClient.gastos(usuario_id, pagina=pagina)
+    else:
+        resultado = ApiClient.ingresos(usuario_id, pagina=pagina)
+
+    texto = build_movimientos_message(resultado, tipo)
+    keyboard = build_movimientos_keyboard(resultado, tipo)
 
     await update.message.reply_text(
         texto,
         reply_markup=keyboard
     )
 
-async def gastos_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def movimientos_callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
     await query.answer()
 
@@ -123,22 +131,24 @@ async def gastos_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         username=telegram_user.username
     )
 
-    pagina = int(query.data.split(":")[1])
+    tipo, pagina_texto = query.data.split(":")
+    pagina = int(pagina_texto)
 
-    resultado = ApiClient.gastos(usuario_id, pagina=pagina)
+    if tipo == "gastos":
+        resultado = ApiClient.gastos(usuario_id, pagina=pagina)
+    else:
+        resultado = ApiClient.ingresos(usuario_id, pagina=pagina)
 
-    texto = build_gastos_message(resultado)
-    keyboard = build_gastos_keyboard(resultado)
+    texto = build_movimientos_message(resultado, tipo)
+    keyboard = build_movimientos_keyboard(resultado, tipo)
 
     await query.edit_message_text(
         text=texto,
         reply_markup=keyboard
     )
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_user = update.effective_user
 
     usuario_id = obtener_o_crear_usuario(
@@ -164,11 +174,13 @@ async def start(
         "• 35 lucas en el super\n"
         "• ayer pagué 48 lucas de luz\n"
         "• ingreso 1.8m sueldo\n"
-        "• gastos del mes\n"
-        "• config\n"
-        "• resumen\n\n"
+        "• /gastos\n"
+        "• /ingresos\n"
+        "• /presupuestos\n"
+        "• /resumen\n\n"
         "También puedes usar el menú de comandos con /"
     )
+
 
 async def command_handler(
     update: Update,
@@ -185,9 +197,19 @@ async def command_handler(
     )
 
     if command == "/gastos":
-        await send_gastos_page(
+        await send_movimientos_page(
             update,
             usuario_id,
+            tipo="gastos",
+            pagina=1
+        )
+        return
+
+    if command == "/ingresos":
+        await send_movimientos_page(
+            update,
+            usuario_id,
+            tipo="ingresos",
             pagina=1
         )
         return
@@ -199,6 +221,7 @@ async def command_handler(
         context,
         mapped_message
     )
+
 
 async def exportar_command(
     update: Update,
@@ -212,9 +235,21 @@ async def exportar_command(
         username=telegram_user.username
     )
 
-    gastos = gastos_mes(usuario_id)
+    todos_los_gastos = []
+    pagina = 1
 
-    if not gastos:
+    while True:
+        resultado = ApiClient.gastos(usuario_id, pagina=pagina)
+        gastos = resultado.get("gastos", [])
+
+        todos_los_gastos.extend(gastos)
+
+        if pagina >= resultado.get("total_paginas", 1):
+            break
+
+        pagina += 1
+
+    if not todos_los_gastos:
         await update.message.reply_text(
             "No tienes gastos registrados este mes."
         )
@@ -230,14 +265,16 @@ async def exportar_command(
         writer = csv.writer(file)
 
         writer.writerow([
+            "ID",
             "Fecha",
             "Categoría",
             "Monto",
             "Descripción"
         ])
 
-        for gasto in gastos:
+        for gasto in todos_los_gastos:
             writer.writerow([
+                gasto["id"],
                 gasto["fecha"],
                 gasto["categoria"],
                 gasto["monto"],
@@ -251,6 +288,7 @@ async def exportar_command(
         filename="gastos_mes.csv"
     )
 
+
 async def receive_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -262,6 +300,7 @@ async def receive_message(
         context,
         mensaje
     )
+
 
 async def handle_user_message(
     update: Update,
@@ -293,6 +332,7 @@ async def handle_user_message(
 
     await update.message.reply_text(respuesta)
 
+
 def start_bot():
     app = (
         ApplicationBuilder()
@@ -305,12 +345,19 @@ def start_bot():
     app.add_handler(CommandHandler("resumen", command_handler))
     app.add_handler(CommandHandler("saldo", command_handler))
     app.add_handler(CommandHandler("gastos", command_handler))
+    app.add_handler(CommandHandler("ingresos", command_handler))
     app.add_handler(CommandHandler("borrar", command_handler))
     app.add_handler(CommandHandler("categorias", command_handler))
     app.add_handler(CommandHandler("config", command_handler))
-    app.add_handler(CommandHandler("exportar", exportar_command))
-    app.add_handler(CallbackQueryHandler(gastos_callback_handler, pattern=r"^gastos:\d+$"))
     app.add_handler(CommandHandler("presupuestos", command_handler))
+    app.add_handler(CommandHandler("exportar", exportar_command))
+
+    app.add_handler(
+        CallbackQueryHandler(
+            movimientos_callback_handler,
+            pattern=r"^(gastos|ingresos):\d+$"
+        )
+    )
 
     app.add_handler(
         MessageHandler(
@@ -322,6 +369,3 @@ def start_bot():
     print("Bot iniciado...")
 
     app.run_polling()
-
-
-    

@@ -13,6 +13,7 @@ class MovimientoRequest(BaseModel):
     categoria: str
     descripcion: str | None = None
     fecha: str | None = None
+    force: bool = False
 
 
 @router.post("/movimientos/gasto")
@@ -23,13 +24,11 @@ def crear_gasto(request: MovimientoRequest):
             monto=request.monto,
             categoria=request.categoria,
             descripcion=request.descripcion or request.categoria,
-            fecha=request.fecha
+            fecha=request.fecha,
+            force=request.force
         )
 
-        return {
-            "ok": True,
-            "movimiento_id": movimiento_id
-        }
+        return movimiento_id
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -43,13 +42,11 @@ def crear_ingreso(request: MovimientoRequest):
             monto=request.monto,
             categoria=request.categoria,
             descripcion=request.descripcion or request.categoria,
-            fecha=request.fecha
+            fecha=request.fecha,
+            force=request.force
         )
 
-        return {
-            "ok": True,
-            "movimiento_id": movimiento_id
-        }
+        return movimiento_id
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

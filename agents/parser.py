@@ -82,7 +82,7 @@ def parse_fecha(text: str) -> str:
     normalized = normalize_text(text)
     hoy = date.today()
 
-    if "antes de ayer" in normalized:
+    if "antes de ayer" in normalized or "anteayer" in normalized:
         return (hoy - timedelta(days=2)).isoformat()
 
     if "ayer" in normalized:
@@ -96,6 +96,9 @@ def parse_amount(text: str):
 
     if re.search(r"(1|un)\s+palo\s+y\s+medio", text):
         return 1500000
+
+    if re.search(r"medio\s+palo", text):
+        return 500000
 
     if re.search(r"(1|un)\s+palo", text):
         return 1000000
@@ -116,6 +119,10 @@ def parse_amount(text: str):
     if match:
         return int(match.group(1)) * 1000
 
+    match = re.search(r"(\d+)\s*mil\b", text)
+    if match:
+        return int(match.group(1)) * 1000
+
     match = re.search(r"(\d+)\s*k\b", text)
     if match:
         return int(match.group(1)) * 1000
@@ -125,6 +132,20 @@ def parse_amount(text: str):
         return int(match.group(1).replace(".", ""))
 
     match = re.search(r"\b(\d+)\b", text)
+    if match:
+        return int(match.group(1))
+
+    return None
+
+
+def parse_movimiento_id(text: str):
+    normalized = normalize_text(text)
+
+    match = re.search(r"(movimiento|gasto|ingreso)\s+#?(\d+)", normalized)
+    if match:
+        return int(match.group(2))
+
+    match = re.search(r"#(\d+)", normalized)
     if match:
         return int(match.group(1))
 
@@ -146,6 +167,21 @@ def detect_intent(text: str) -> str:
     if normalized in ["config", "configuracion", "configuración", "ver config", "ver configuracion"]:
         return "config"
 
+    if normalized in ["presupuestos", "presupuesto categorias", "presupuestos categorias"]:
+        return "presupuestos_categoria"
+
+    if normalized.startswith("presupuesto "):
+        return "configurar_presupuesto_categoria"
+
+    if normalized.startswith("crear categoria ") or normalized.startswith("crear categoría "):
+        return "crear_categoria"
+
+    if normalized.startswith("nueva categoria ") or normalized.startswith("nueva categoría "):
+        return "crear_categoria"
+
+    if "ingreso mensual" in normalized:
+        return "configurar_ingreso_mensual"
+
     if (
         normalized.startswith("cambiar fecha corte")
         or normalized.startswith("cambiar fecha de corte")
@@ -158,7 +194,15 @@ def detect_intent(text: str) -> str:
         return "saldo"
 
     if (
-        "gastos del mes" in normalized
+        normalized.startswith("ingresos")
+        or "ingresos del mes" in normalized
+        or "ver ingresos" in normalized
+    ):
+        return "ingresos_mes"
+
+    if (
+        normalized.startswith("gastos")
+        or "gastos del mes" in normalized
         or "todos los gastos" in normalized
         or "ver gastos" in normalized
     ):
@@ -171,6 +215,18 @@ def detect_intent(text: str) -> str:
         or "eliminar ultimo" in normalized
     ):
         return "borrar_ultimo_movimiento"
+
+    if normalized.startswith("elimina movimiento") or normalized.startswith("eliminar movimiento"):
+        return "eliminar_movimiento"
+
+    if normalized.startswith("borra movimiento") or normalized.startswith("borrar movimiento"):
+        return "eliminar_movimiento"
+
+    if normalized.startswith("edita movimiento") or normalized.startswith("editar movimiento"):
+        return "editar_movimiento"
+
+    if normalized.startswith("cambia movimiento") or normalized.startswith("cambiar movimiento"):
+        return "editar_movimiento"
 
     if normalized.startswith("aprende ") and " como " in normalized:
         return "aprender_categoria"
@@ -186,12 +242,6 @@ def detect_intent(text: str) -> str:
 
     if parse_amount(normalized):
         return "registrar_gasto"
-    
-    if normalized in ["presupuestos", "presupuesto categorias", "presupuestos categorias"]:
-        return "presupuestos_categoria"
-
-    if normalized.startswith("presupuesto "):
-        return "configurar_presupuesto_categoria"
 
     return "desconocido"
 
@@ -199,16 +249,17 @@ def detect_intent(text: str) -> str:
 def extract_category(text: str) -> str:
     normalized = normalize_text(text)
 
-    cleaned = re.sub(r"\d+(?:\.\d+)?\s*(lucas?|k|m|palos?|millones)?", "", normalized)
+    cleaned = re.sub(r"\d+(?:\.\d+)?\s*(lucas?|k|m|mil|palos?|millones)?", "", normalized)
     cleaned = cleaned.replace("un palo y medio", "")
     cleaned = cleaned.replace("un palo", "")
+    cleaned = cleaned.replace("medio palo", "")
     cleaned = cleaned.replace("palo y medio", "")
 
     remove_words = [
         "gaste", "gasto", "pague", "pago", "compre", "compra",
         "en", "de", "por", "el", "la", "los", "las",
         "me", "depositaron", "pagaron", "recibi", "ingreso",
-        "ayer", "hoy", "antes"
+        "ayer", "hoy", "antes", "anteayer"
     ]
 
     for word in remove_words:
@@ -230,6 +281,8 @@ def parse_message(text: str) -> dict:
         "categorias",
         "config",
         "gastos_mes",
+        "ingresos_mes",
+        "presupuestos_categoria",
         "borrar_ultimo_movimiento"
     ]:
         return {"intent": intent}
@@ -237,15 +290,69 @@ def parse_message(text: str) -> dict:
     if intent == "cambiar_fecha_corte":
         dia = parse_amount(normalized)
 
-        if not dia:
-            return {
-                "intent": "cambiar_fecha_corte",
-                "dia": None
-            }
-
         return {
             "intent": "cambiar_fecha_corte",
-            "dia": int(dia)
+            "dia": int(dia) if dia else None
+        }
+
+    if intent == "configurar_ingreso_mensual":
+        monto = parse_amount(normalized)
+
+        return {
+            "intent": "configurar_ingreso_mensual",
+            "ingreso_mensual": monto
+        }
+
+    if intent == "crear_categoria":
+        nombre = normalized
+        nombre = nombre.replace("crear categoria", "")
+        nombre = nombre.replace("crear categoría", "")
+        nombre = nombre.replace("nueva categoria", "")
+        nombre = nombre.replace("nueva categoría", "")
+        nombre = " ".join(nombre.split())
+
+        return {
+            "intent": "crear_categoria",
+            "nombre": nombre,
+            "tipo": "gasto"
+        }
+
+    if intent == "configurar_presupuesto_categoria":
+        monto = parse_amount(normalized)
+
+        categoria_texto = normalized.replace("presupuesto", "", 1)
+        categoria_texto = re.sub(
+            r"\d+(?:\.\d+)?\s*(lucas?|k|m|mil|palos?|millones)?",
+            "",
+            categoria_texto
+        )
+        categoria_texto = " ".join(categoria_texto.split())
+
+        return {
+            "intent": "configurar_presupuesto_categoria",
+            "categoria": normalize_category(categoria_texto),
+            "monto": monto
+        }
+
+    if intent == "eliminar_movimiento":
+        movimiento_id = parse_movimiento_id(normalized)
+
+        return {
+            "intent": "eliminar_movimiento",
+            "movimiento_id": movimiento_id
+        }
+
+    if intent == "editar_movimiento":
+        movimiento_id = parse_movimiento_id(normalized)
+        monto = parse_amount(normalized)
+        categoria = extract_category(normalized)
+
+        return {
+            "intent": "editar_movimiento",
+            "movimiento_id": movimiento_id,
+            "monto": monto,
+            "categoria": categoria if categoria not in ["otros", "movimiento"] else None,
+            "fecha": parse_fecha(normalized)
         }
 
     if intent == "aprender_categoria":
@@ -270,35 +377,6 @@ def parse_message(text: str) -> dict:
         return {
             "intent": "consulta_categoria",
             "categoria": normalize_category(categoria)
-        }
-    
-    if intent == "presupuestos_categoria":
-        return {
-            "intent": "presupuestos_categoria"
-        }
-
-    if intent == "configurar_presupuesto_categoria":
-        monto = parse_amount(normalized)
-
-        if not monto:
-            return {
-                "intent": "configurar_presupuesto_categoria",
-                "categoria": None,
-                "monto": None
-            }
-
-        categoria_texto = normalized.replace("presupuesto", "", 1)
-        categoria_texto = re.sub(
-            r"\d+(?:\.\d+)?\s*(lucas?|k|m|palos?|millones)?",
-            "",
-            categoria_texto
-        )
-        categoria_texto = " ".join(categoria_texto.split())
-
-        return {
-            "intent": "configurar_presupuesto_categoria",
-            "categoria": normalize_category(categoria_texto),
-            "monto": monto
         }
 
     if intent in ["registrar_gasto", "registrar_ingreso"]:

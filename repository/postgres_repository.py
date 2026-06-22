@@ -639,3 +639,553 @@ def obtener_presupuestos_categoria(usuario_id):
         }
         for row in rows
     ]
+
+def normalizar_rut(rut):
+    if not rut:
+        return None
+
+    rut = rut.upper().replace(".", "").replace(" ", "")
+
+    if "-" not in rut and len(rut) > 1:
+        rut = rut[:-1] + "-" + rut[-1]
+
+    return rut
+
+
+def obtener_usuario_por_rut(rut):
+    rut = normalizar_rut(rut)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, rut, nombre, username
+        FROM usuarios
+        WHERE rut = %s
+        LIMIT 1
+    """, (rut,))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "rut": row[1],
+        "nombre": row[2],
+        "username": row[3]
+    }
+
+
+def actualizar_rut_usuario(usuario_id, rut):
+    rut = normalizar_rut(rut)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE usuarios
+        SET rut = %s
+        WHERE id = %s
+    """, (rut, usuario_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return rut
+
+
+def obtener_categoria_por_nombre(nombre, usuario_id=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, nombre, tipo, usuario_id
+        FROM categorias
+        WHERE lower(nombre) = lower(%s)
+          AND (
+                usuario_id IS NULL
+                OR usuario_id = %s
+              )
+        ORDER BY usuario_id NULLS FIRST
+        LIMIT 1
+    """, (nombre, usuario_id))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    return row
+
+
+def crear_categoria_personalizada(usuario_id, nombre, tipo="gasto"):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO categorias (
+            nombre,
+            tipo,
+            usuario_id
+        )
+        VALUES (%s, %s, %s)
+        ON CONFLICT (lower(nombre), COALESCE(usuario_id, 0))
+        DO NOTHING
+    """, (
+        nombre.lower().strip(),
+        tipo,
+        usuario_id
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def resolver_categoria_usuario(usuario_id, categoria_texto):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT c.id, c.nombre
+        FROM categoria_alias_usuario a
+        JOIN categorias c ON c.id = a.categoria_id
+        WHERE a.usuario_id = %s
+          AND lower(a.alias) = lower(%s)
+        LIMIT 1
+    """, (
+        usuario_id,
+        categoria_texto
+    ))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if row:
+        return row
+
+    categoria_db = obtener_categoria_por_nombre(
+        categoria_texto,
+        usuario_id
+    )
+
+    if categoria_db:
+        return categoria_db
+
+    return obtener_categoria_por_nombre("otros", usuario_id)
+
+
+def buscar_movimiento_duplicado(
+    usuario_id,
+    tipo,
+    monto,
+    categoria_id,
+    fecha
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            tipo,
+            monto,
+            fecha
+        FROM movimientos
+        WHERE usuario_id = %s
+          AND tipo = %s
+          AND monto = %s
+          AND categoria_id = %s
+          AND fecha = COALESCE(%s, CURRENT_DATE)
+          AND eliminado = FALSE
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (
+        usuario_id,
+        tipo,
+        monto,
+        categoria_id,
+        fecha
+    ))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "tipo": row[1],
+        "monto": row[2],
+        "fecha": row[3]
+    }
+
+
+def registrar_movimiento(
+    usuario_id,
+    presupuesto_id,
+    tipo,
+    monto,
+    categoria,
+    descripcion="",
+    fecha=None,
+    force=False
+):
+    categoria_db = resolver_categoria_usuario(
+        usuario_id,
+        categoria
+    )
+
+    if not categoria_db:
+        raise Exception(f"La categoría '{categoria}' no existe")
+
+    categoria_id = categoria_db[0]
+    categoria_nombre = categoria_db[1]
+
+    duplicado = buscar_movimiento_duplicado(
+        usuario_id=usuario_id,
+        tipo=tipo,
+        monto=monto,
+        categoria_id=categoria_id,
+        fecha=fecha
+    )
+
+    if duplicado and not force:
+        return {
+            "ok": False,
+            "duplicate": True,
+            "message": "Existe un movimiento similar registrado.",
+            "movimiento": duplicado
+        }
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO movimientos (
+            usuario_id,
+            presupuesto_id,
+            categoria_id,
+            tipo,
+            monto,
+            descripcion,
+            fecha,
+            eliminado,
+            updated_at
+        )
+        VALUES (
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            COALESCE(%s, CURRENT_DATE),
+            FALSE,
+            NOW()
+        )
+        RETURNING id
+    """, (
+        usuario_id,
+        presupuesto_id,
+        categoria_id,
+        tipo,
+        monto,
+        descripcion,
+        fecha
+    ))
+
+    movimiento_id = cur.fetchone()[0]
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {
+        "ok": True,
+        "duplicate": False,
+        "movimiento_id": movimiento_id,
+        "categoria": categoria_nombre
+    }
+
+
+def obtener_movimientos_mes(
+    usuario_id,
+    tipo,
+    pagina=1,
+    page_size=10
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM movimientos
+        WHERE usuario_id = %s
+          AND tipo = %s
+          AND eliminado = FALSE
+          AND date_trunc('month', fecha) = date_trunc('month', CURRENT_DATE)
+    """, (
+        usuario_id,
+        tipo
+    ))
+
+    total_registros = cur.fetchone()[0]
+
+    if total_registros <= 15:
+        limit = total_registros
+        offset = 0
+        pagina = 1
+        page_size_real = total_registros
+    else:
+        limit = page_size
+        offset = (pagina - 1) * page_size
+        page_size_real = page_size
+
+    cur.execute("""
+        SELECT
+            m.id,
+            m.fecha,
+            c.nombre,
+            m.monto,
+            COALESCE(m.descripcion, '')
+        FROM movimientos m
+        LEFT JOIN categorias c ON c.id = m.categoria_id
+        WHERE m.usuario_id = %s
+          AND m.tipo = %s
+          AND m.eliminado = FALSE
+          AND date_trunc('month', m.fecha) = date_trunc('month', CURRENT_DATE)
+        ORDER BY m.fecha DESC, m.created_at DESC
+        LIMIT %s OFFSET %s
+    """, (
+        usuario_id,
+        tipo,
+        limit,
+        offset
+    ))
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    total_paginas = (
+        1
+        if total_registros <= 15
+        else ((total_registros + page_size - 1) // page_size)
+    )
+
+    return {
+        "movimientos": [
+            {
+                "id": row[0],
+                "fecha": row[1],
+                "categoria": row[2],
+                "monto": row[3],
+                "descripcion": row[4]
+            }
+            for row in rows
+        ],
+        "pagina": pagina,
+        "page_size": page_size_real,
+        "total_registros": total_registros,
+        "total_paginas": total_paginas
+    }
+
+
+def obtener_gastos_mes(usuario_id, pagina=1, page_size=10):
+    resultado = obtener_movimientos_mes(
+        usuario_id=usuario_id,
+        tipo="gasto",
+        pagina=pagina,
+        page_size=page_size
+    )
+
+    return {
+        "gastos": resultado["movimientos"],
+        "pagina": resultado["pagina"],
+        "page_size": resultado["page_size"],
+        "total_registros": resultado["total_registros"],
+        "total_paginas": resultado["total_paginas"]
+    }
+
+
+def obtener_ingresos_mes(usuario_id, pagina=1, page_size=10):
+    resultado = obtener_movimientos_mes(
+        usuario_id=usuario_id,
+        tipo="ingreso",
+        pagina=pagina,
+        page_size=page_size
+    )
+
+    return {
+        "ingresos": resultado["movimientos"],
+        "pagina": resultado["pagina"],
+        "page_size": resultado["page_size"],
+        "total_registros": resultado["total_registros"],
+        "total_paginas": resultado["total_paginas"]
+    }
+
+
+def obtener_movimiento_por_id(usuario_id, movimiento_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            m.id,
+            m.tipo,
+            m.monto,
+            c.nombre,
+            m.descripcion,
+            m.fecha
+        FROM movimientos m
+        LEFT JOIN categorias c ON c.id = m.categoria_id
+        WHERE m.usuario_id = %s
+          AND m.id = %s
+          AND m.eliminado = FALSE
+        LIMIT 1
+    """, (
+        usuario_id,
+        movimiento_id
+    ))
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "tipo": row[1],
+        "monto": row[2],
+        "categoria": row[3],
+        "descripcion": row[4],
+        "fecha": row[5]
+    }
+
+
+def eliminar_movimiento_por_id(usuario_id, movimiento_id):
+    movimiento = obtener_movimiento_por_id(
+        usuario_id,
+        movimiento_id
+    )
+
+    if not movimiento:
+        return None
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE movimientos
+        SET eliminado = TRUE,
+            updated_at = NOW()
+        WHERE usuario_id = %s
+          AND id = %s
+    """, (
+        usuario_id,
+        movimiento_id
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return movimiento
+
+
+def editar_movimiento_por_id(
+    usuario_id,
+    movimiento_id,
+    monto=None,
+    categoria=None,
+    descripcion=None,
+    fecha=None
+):
+    movimiento = obtener_movimiento_por_id(
+        usuario_id,
+        movimiento_id
+    )
+
+    if not movimiento:
+        return None
+
+    categoria_id = None
+
+    if categoria:
+        categoria_db = resolver_categoria_usuario(
+            usuario_id,
+            categoria
+        )
+
+        if not categoria_db:
+            raise Exception(f"La categoría '{categoria}' no existe")
+
+        categoria_id = categoria_db[0]
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE movimientos
+        SET
+            monto = COALESCE(%s, monto),
+            categoria_id = COALESCE(%s, categoria_id),
+            descripcion = COALESCE(%s, descripcion),
+            fecha = COALESCE(%s, fecha),
+            updated_at = NOW()
+        WHERE usuario_id = %s
+          AND id = %s
+          AND eliminado = FALSE
+    """, (
+        monto,
+        categoria_id,
+        descripcion,
+        fecha,
+        usuario_id,
+        movimiento_id
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return obtener_movimiento_por_id(
+        usuario_id,
+        movimiento_id
+    )
+
+
+def actualizar_ingreso_mensual(usuario_id, ingreso_mensual):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE configuracion_usuario
+        SET ingreso_mensual = %s
+        WHERE usuario_id = %s
+    """, (
+        ingreso_mensual,
+        usuario_id
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return ingreso_mensual
